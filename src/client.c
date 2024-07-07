@@ -1,17 +1,14 @@
 #include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 #define BUFFER_SIZE 1024
 
-int main(int argc, char const *argv[]) {
-
+int main(int argc, char *argv[]) {
   int read_flag = 0;
   int write_flag = 0;
 
@@ -20,79 +17,141 @@ int main(int argc, char const *argv[]) {
   char *local_path = NULL;
   char *remote_path = NULL;
 
-  for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "-a") == 0) {
-      if (i + 1 < argc) {
-        address = strdup(argv[++i]);
-      }
-    } else if (strcmp(argv[i], "-p") == 0) {
-      if (i + 1 < argc) {
-        port = atoi(argv[++i]);
-      }
-    } else if (strcmp(argv[i], "-f") == 0) {
-      if (i + 1 < argc) {
-        local_path = strdup(argv[++i]);
-      }
-    } else if (strcmp(argv[i], "-o") == 0) {
-      if (i + 1 < argc) {
-        remote_path = strdup(argv[++i]);
-      }
-    } else if (strcmp(argv[i], "-r") == 0) {
-      read_flag = 0;
-    } else if (strcmp(argv[i], "-w") == 0) {
+  int opt;
+
+  while ((opt = getopt(argc, argv, "a:p:f:o:rw")) != -1) {
+    switch (opt) {
+    case 'a':
+      address = strdup(optarg);
+      break;
+    case 'p':
+      port = atoi(optarg);
+      break;
+    case 'f':
+      local_path = strdup(optarg);
+      break;
+    case 'o':
+      remote_path = strdup(optarg);
+      break;
+    case 'w':
       write_flag = 1;
-    } else {
-      printf("Unknown argument: %s\n", argv[i]);
+      break;
+    case 'r':
+      read_flag = 1;
+      break;
+    default:
+      printf("Unknown argument: %c\n", opt);
       return 0;
     }
   }
 
-  int socket_d = socket(AF_INET, SOCK_STREAM, 0);
+  if (!address || !port) {
+    printf("Address and port are required.\n");
+    return 0;
+  }
+
+  if (read_flag && write_flag) {
+    printf("Cannot read and write at the same time.\n");
+    return 0;
+  }
+
+  if (!read_flag && !write_flag) {
+    printf("Either read or write flag is required.\n");
+    return 0;
+  }
+
+  int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 
   struct sockaddr_in server_address;
-
   server_address.sin_family = AF_INET;
   server_address.sin_port = htons(port);
 
-  if (inet_pton(AF_INET, address, &(server_address.sin_addr)) <= 0) {
+  if (inet_pton(AF_INET, address, &server_address.sin_addr) <= 0) {
     printf("The specified address is invalid.\n");
     return -1;
   }
 
-  int status = connect(socket_d, (struct sockaddr *)&server_address,
-                       sizeof(server_address));
-
-  if (status == -1) {
-    printf("There was an error while trying to connect.\n");
-  } else {
-    if (write_flag) {
-      int file_d = open(local_path, O_RDONLY);
-
-      if (file_d < 0) {
-        perror("Failed to open the file");
-        return -1;
-      }
-
-      send(socket_d, remote_path, strlen(remote_path) + 1, 0);
-
-      char buffer[BUFFER_SIZE];
-      ssize_t bytes_read;
-
-      while ((bytes_read = read(file_d, buffer, BUFFER_SIZE)) > 0) {
-        send(socket_d, buffer, bytes_read, 0);
-      }
-
-      close(file_d);
-    } else {
-      char strData[255];
-
-      recv(socket_d, strData, sizeof(strData), 0);
-
-      printf("Message: %s\n", strData);
-    }
+  if (connect(socket_fd, (struct sockaddr *)&server_address,
+              sizeof(server_address)) < 0) {
+    perror("connect");
+    return -1;
   }
 
-  close(socket_d);
+  char request_buffer[BUFFER_SIZE];
+
+  if (write_flag) {
+    if (!remote_path) {
+      remote_path = strdup(local_path);
+    }
+
+    sprintf(request_buffer, "WRITE TO %s", remote_path);
+
+    char confirmation_buffer[BUFFER_SIZE];
+    send(socket_fd, request_buffer, strlen(request_buffer), 0);
+
+    recv(socket_fd, confirmation_buffer, BUFFER_SIZE, 0);
+
+    printf("The server responded with: %s\n", confirmation_buffer);
+
+    if (strcmp(confirmation_buffer, "OK") != 0) {
+      printf("The server did not confirm the write operation.\n");
+      return -1;
+    }
+
+    FILE *file = fopen(local_path, "r");
+
+    if (!file) {
+      perror("fopen");
+      return -1;
+    }
+
+    while (1) {
+      int bytes_read = fread(request_buffer, 1, BUFFER_SIZE, file);
+
+      if (bytes_read <= 0) {
+        break;
+      }
+
+      send(socket_fd, request_buffer, bytes_read, 0);
+    }
+
+    fclose(file);
+
+  } else if (read_flag) {
+    sprintf(request_buffer, "READ FROM %s", local_path);
+
+    send(socket_fd, request_buffer, strlen(request_buffer), 0);
+
+    char confirmation_buffer[BUFFER_SIZE];
+    recv(socket_fd, confirmation_buffer, BUFFER_SIZE, 0);
+
+    if (strcmp(confirmation_buffer, "OK") != 0) {
+      printf("The server did not confirm the read operation.\n");
+      return -1;
+    }
+
+    FILE *file = fopen(remote_path, "w");
+
+    if (!file) {
+      perror("fopen");
+      return -1;
+    }
+
+    while (1) {
+      printf("a\n");
+      int bytes_received = recv(socket_fd, request_buffer, BUFFER_SIZE, 0);
+
+      if (bytes_received <= 0) {
+        break;
+      }
+
+      fwrite(request_buffer, 1, bytes_received, file);
+    }
+
+    fclose(file);
+
+    printf("File received and written to %s\n", remote_path);
+  }
 
   return 0;
 }
