@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <libgen.h>
@@ -18,6 +19,26 @@ typedef struct {
   int client_socket;
   char *root_dir;
 } client_info;
+
+int mkdir_p(const char *path) {
+  char temp[256];
+  char *p = NULL;
+  size_t len;
+
+  snprintf(temp, sizeof(temp), "%s", path);
+  len = strlen(temp);
+  if (temp[len - 1] == '/')
+    temp[len - 1] = 0;
+  for (p = temp + 1; *p; p++)
+    if (*p == '/') {
+      *p = 0;
+      mkdir(temp, S_IRWXU);
+      *p = '/';
+    }
+  mkdir(temp, S_IRWXU);
+
+  return 0;
+}
 
 char *path_join(const char *path1, const char *path2) {
   // Calculate the length of the paths
@@ -59,7 +80,23 @@ int main(int argc, char *argv[]) {
       port = atoi(optarg);
       break;
     case 'd':
-      root_dir = strdup(optarg);
+      struct stat st = {0};
+      if (stat(optarg, &st) == -1) {
+        if (mkdir_p(optarg) == -1) {
+          perror("Error creating directory");
+          return 1;
+        }
+      } else {
+        printf("Directory exists.\n");
+      }
+
+      root_dir = realpath(optarg, NULL);
+
+      if (root_dir == NULL) {
+        perror("realpath");
+        return -1;
+      }
+
       break;
 
     default:
@@ -85,7 +122,11 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  bind(socket_fd, (struct sockaddr *)&server_address, sizeof(server_address));
+  if (bind(socket_fd, (struct sockaddr *)&server_address,
+           sizeof(server_address)) < 0) {
+    perror("bind");
+    return -1;
+  }
 
   listen(socket_fd, 0);
 
@@ -223,7 +264,65 @@ void *handle_client(void *arg) {
 
       send(socket, file_buffer, bytes_read, 0);
     }
+
+    close(file_fd);
+    close(socket);
+    printf("Sent file %s\n", file_path);
+  } else if (strncmp(buffer, "LIST ", 5) == 0) {
+    char *file_path = path_join(root_dir, buffer + 5);
+
+    printf("Listing files in %s\n", file_path);
+
+    struct stat path_stat;
+    stat(file_path, &path_stat);
+
+    if (!S_ISDIR(path_stat.st_mode)) {
+      send(socket, "NOT A DIRECTORY\0", 16, 0);
+      printf("Not a directory\n");
+      close(socket);
+      free(info);
+      free(file_path);
+      return NULL;
+    } else {
+      send(socket, "OK\0", 3, 0);
+    }
+
+    char confirmation_buffer[BUFFER_SIZE];
+    recv(socket, confirmation_buffer, BUFFER_SIZE, 0);
+
+    if (strcmp(confirmation_buffer, "OK") != 0) {
+      close(socket);
+      free(info);
+      free(file_path);
+      return NULL;
+    }
+
+    DIR *dir = opendir(file_path);
+
+    if (!dir) {
+      perror("opendir");
+      close(socket);
+      free(info);
+      free(file_path);
+      return NULL;
+    }
+
+    struct dirent *dp;
+    char buffer[1024];
+
+    while ((dp = readdir(dir)) != NULL) {
+      if (strcmp(dp->d_name, ".") == 0 || strcmp(dp->d_name, "..") == 0)
+        continue;
+
+      snprintf(buffer, sizeof(buffer), "%s\n", dp->d_name);
+      send(socket, buffer, strlen(buffer), 0);
+    }
+
+    closedir(dir);
+    close(socket);
   }
+
+  free(info);
 
   return NULL;
 }
