@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
   while (1) {
     client_info *info = malloc(sizeof(client_info));
     info->client_socket = accept(socket_fd, NULL, NULL);
-    info->root_dir = root_dir; // assuming root_dir is defined earlier
+    info->root_dir = root_dir;
 
     if (info->client_socket < 0) {
       perror("accept");

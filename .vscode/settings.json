@@ -4,9 +4,12 @@
   "[json]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
+  
   "files.associations": {
     "string.h": "c",
     "stdlib.h": "c",
-    "libgen.h": "c"
-}
+    "libgen.h": "c",
+    "inet.h": "c",
+    "unistd.h": "c"
+  }
 }
