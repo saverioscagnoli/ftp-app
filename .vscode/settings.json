@@ -10,6 +10,12 @@
     "stdlib.h": "c",
     "libgen.h": "c",
     "inet.h": "c",
-    "unistd.h": "c"
+    "unistd.h": "c",
+    "stdio.h": "c",
+    "stat.h": "c",
+    "vector": "cpp",
+    "utils.h": "c",
+    "socket.h": "c",
+    "types.h": "c"
   }
 }
