@@ -15,6 +15,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+pthread_mutex_t lock;
+
 typedef struct {
   char *root_dir;
   int client_socket;
@@ -143,6 +145,13 @@ void *handle_client(void *arg) {
 
   switch (opcode) {
   case OPCODE_WRITE: {
+
+    // Lock the mutex
+    pthread_mutex_lock(&lock);
+
+    // Sleep can be activated to test the concurrency
+    // sleep(1);
+
     // Write request
     // The client wants to write a file to the server.
     // Send OK response, to indicate that the server received and understood the
@@ -197,6 +206,11 @@ void *handle_client(void *arg) {
   }
 
   case OPCODE_READ: {
+    // Lock the mutex
+    pthread_mutex_lock(&lock);
+
+    // Sleep can be activated to test the concurrency
+    // sleep(1);
     // Read request.
     // The client wants to read a file from the server.
     // Send OK response, to indicate that the server received and understood the
@@ -389,6 +403,9 @@ void *handle_client(void *arg) {
   default:
     break;
   }
+
+  // Unlock the mutex
+  pthread_mutex_unlock(&lock);
 
   // Close the client socket and free the memory.
   close(info->client_socket);
